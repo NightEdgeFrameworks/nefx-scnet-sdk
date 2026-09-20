@@ -1,0 +1,65 @@
+{
+  "$schema": "./templates/job.schema.json",
+  "name": "of-run-001",
+  "notes": "OpenFOAM 求解。上传算例 tar 后解包到 workDir，算例根就是 workDir（caseSubdir=\".\"）",
+  "region": "0",
+  "jobManagerId": "",
+  "queue": "xahcnormal",
+  "resources": {
+    "nodes": 1,
+    "cores": 16,
+    "walltime": "03:00:00",
+    "exclusive": false,
+    "nodeString": ""
+  },
+  "workDir": "~/runs/of-001",
+  "inputs": [
+    {
+      "local": "case/s1b-refined-v2212.tar.gz",
+      "remoteDir": "~/runs/of-001",
+      "chunkMiB": 8,
+      "cover": "cover",
+      "skipIfSameSize": true
+    }
+  ],
+  "openfoam": {
+    "openfoamRoot": "/public/software/apps/OpenFOAM/v2212/hpcx-gcc-7.3.1/OpenFOAM-v2212",
+    "moduleName": "OpenFOAM/v2212-hpcx-gcc-7.3.1",
+    "platform": "linux64GccDPInt32Opt",
+    "solver": "interFoam",
+    "caseSubdir": ".",
+    "cores": 16,
+    "launcherCandidates": [
+      "mpirun --bind-to core",
+      "mpirun",
+      "mpirun --bind-to none --oversubscribe"
+    ],
+    "prepare": true,
+    "reconstruct": true,
+    "reconstructAll": false,
+    "env": [],
+    "preCommands": [],
+    "extraSolveArgs": [],
+    "postCommands": []
+  },
+  "upload": {
+    "chunkMiB": 8,
+    "retries": 3,
+    "cover": "cover",
+    "verifySize": true
+  },
+  "outputs": [
+    {
+      "remote": "log.interFoam.fresh",
+      "local": "results/log.interFoam.fresh",
+      "required": false
+    },
+    {
+      "remote": "log.checkMesh",
+      "local": "results/log.checkMesh",
+      "required": false
+    }
+  ],
+  "stdout": "stdout.%j",
+  "stderr": "stderr.%j"
+}

@@ -1,0 +1,26 @@
+# 不进镜像的东西。
+# 原则：镜像里只放"跑起来需要"的；运行记录、本地算例、测试、文档都不放。
+node_modules/
+runs/
+*.log
+*.part
+
+# 本地算例与结果（809 MB 的 dat.h5 之类）——这些要用的时候是**挂载**进去，不是拷进去
+*.cas
+*.cas.h5
+*.dat
+*.dat.h5
+*.msh
+*.msh.h5
+*.trn
+*.jou
+
+test/
+docs/
+templates/job.schema.json
+
+.git/
+.gitignore
+.vscode/
+Dockerfile
+.dockerignore

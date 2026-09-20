@@ -1,0 +1,18 @@
+{
+  // 只给编辑器和可选的 `npm run typecheck` 用。
+  // 运行时不需要编译：Node >= 23.6 原生剥类型，直接 `node src/cli.ts` 即可。
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

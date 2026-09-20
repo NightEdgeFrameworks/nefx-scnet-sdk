@@ -1,0 +1,31 @@
+; Fluent 批处理 journal。
+; 这个文件会被上传到远端算例目录，由 `fluent -i solve.jou` 读取。
+; 模板里 fluent.journal 的值必须和这里的文件名一致。
+;
+; 三条实测过的规矩，别改：
+;   1. 先做事、诊断放最后。上一版把 (%rp-config #f) 探针放在开头，探针一抛错整个 journal
+;      就中止了，作业退出码 1，白跑一趟。
+;   2. 读文件用相对文件名。远端进程的 cwd 就是作业工作目录（GAP_WORK_DIR），
+;      而 workDir 默认取第一个 inputs[].remoteDir，所以算例就在手边。
+;   3. -g 是必须的。无 DISPLAY 时不加它会失败，命令行由模板自动带上。
+
+/file/read-case 1.cas.h5
+
+; 续算才需要读 data。从头算就把下面这行的分号去掉、改成你自己的文件名。
+; /file/read-data 1.dat.h5
+
+; ── 瞬态（双时间步）───────────────────────────────────────────────
+; TUI 形式：迭代步数 / 时间步长 / 每步内迭代上限
+/solve/dual-time-iterate
+100
+5e-4
+20
+
+; ── 稳态的写法（二选一）──────────────────────────────────────────
+; /solve/iterate
+; 500
+
+/file/write-data 1_out.dat.h5
+
+/exit
+yes

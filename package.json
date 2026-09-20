@@ -1,0 +1,25 @@
+{
+  "name": "nefx-scnet-sdk",
+  "version": "0.7.0",
+  "private": true,
+  "description": "SCNet（国家超算互联网 / 曙光超算）OpenAPI 2.0 客户端：上传算例、按 JSON 模板提交作业、查询与取回结果",
+  "type": "module",
+  "engines": {
+    "node": ">=23.6"
+  },
+  "bin": {
+    "scnet": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "node --test",
+    "scnet": "node src/cli.ts",
+    "serve": "node src/cli.ts serve",
+    "mcp": "node src/cli.ts mcp",
+    "schema": "node src/cli.ts schema --out templates/job.schema.json",
+    "check": "node src/cli.ts check templates/fluent-batch.job.json --lenient",
+    "smoke": "node src/cli.ts smoke",
+    "lint:parse": "node --check src/auth.ts && node --check src/redact.ts && node --check src/api.ts && node --check src/upload.ts && node --check src/jobtemplate.ts && node --check src/openfoam.ts && node --check src/jobs.ts && node --check src/client.ts && node --check src/cli.ts && node --check src/watch.ts && node --check src/core.ts && node --check src/serve.ts && node --check src/mcp.ts && node --check tools/console-feed.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

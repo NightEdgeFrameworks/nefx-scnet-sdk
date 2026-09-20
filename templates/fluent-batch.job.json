@@ -1,0 +1,63 @@
+{
+  "$schema": "./job.schema.json",
+  "name": "tps-steady-001",
+  "notes": "起步模板。要改的只有三处：inputs[].local 指向你本地的算例与 journal；region 按 `scnet probe` 的结果填；resources.cores 和 fluent.cores 要一致。远端路径一律用 ~ 开头（表示超算家目录），不要写死 /public/home/<用户名>。",
+  "region": "0",
+  "jobManagerId": "",
+  "queue": "xahcnormal",
+  "resources": {
+    "nodes": 1,
+    "cores": 8,
+    "walltime": "02:00:00",
+    "exclusive": false,
+    "nodeString": ""
+  },
+  "workDir": "",
+  "inputs": [
+    {
+      "local": "../D260914-scnet-automation/fluent-case/1.cas.h5",
+      "remoteDir": "~/runs/001",
+      "chunkMiB": 8,
+      "cover": "cover",
+      "skipIfSameSize": true
+    },
+    {
+      "local": "examples/solve.jou",
+      "remoteDir": "~/runs/001",
+      "chunkMiB": 8,
+      "cover": "cover",
+      "skipIfSameSize": true
+    }
+  ],
+  "fluent": {
+    "installCandidates": [
+      "$HOME/apprepo/fluent/2023r1-xian",
+      "$HOME/apprepro/fluent/2023r1-xian",
+      "$HOME/appre*/fluent/2023r1-xian"
+    ],
+    "binRelPath": "app/v231/fluent/bin/fluent",
+    "dimension": "3ddp",
+    "mpi": "intel",
+    "cores": 8,
+    "journal": "solve.jou",
+    "extraArgs": [],
+    "env": [],
+    "preCommands": [],
+    "postCommands": []
+  },
+  "upload": {
+    "chunkMiB": 8,
+    "retries": 3,
+    "cover": "cover",
+    "verifySize": true
+  },
+  "outputs": [
+    {
+      "remote": "1_out.dat.h5",
+      "local": "results/1_out.dat.h5",
+      "required": false
+    }
+  ],
+  "stdout": "stdout.%j",
+  "stderr": "stderr.%j"
+}

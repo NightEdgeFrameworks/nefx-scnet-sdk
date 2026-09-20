@@ -1,0 +1,7 @@
+# 统一用 LF 落库。
+# 理由：这个仓库以后要推到 NAS 上的远端仓库，也可能在 Linux 上 clone；
+# 带 CRLF 的 .sh / .jou 在 Linux 上会因为 \r 直接跑不起来（"No such file or directory" 这类假错）。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.h5  binary

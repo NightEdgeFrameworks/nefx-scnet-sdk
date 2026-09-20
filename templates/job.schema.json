@@ -1,0 +1,485 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://local/scnet-client/job.schema.json",
+  "title": "SCNet 作业模板",
+  "description": "由 src/jobtemplate.ts 的 SPEC 自动生成，请勿手改。重新生成：node src/cli.ts schema --out templates/job.schema.json",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "指向 templates/job.schema.json，给编辑器补全用，可删",
+      "type": "string"
+    },
+    "name": {
+      "description": "作业名（GAP_JOB_NAME）。会出现在作业列表里，建议带算例标识与序号\n[evidence: verified]",
+      "type": "string"
+    },
+    "notes": {
+      "description": "给自己看的备注，不会提交到平台",
+      "type": "string"
+    },
+    "region": {
+      "description": "目标计算区域：序号（0,1,…）或 clusterName。留空＝第 0 个可用区域",
+      "type": "string"
+    },
+    "jobManagerId": {
+      "description": "集群调度器 ID（strJobManagerID）。留空＝自动从 /openapi/v2/cluster 获取。注意它不是 clusterId\n[evidence: verified]",
+      "type": "string",
+      "default": ""
+    },
+    "queue": {
+      "description": "队列名（GAP_QUEUE）。默认值在西安集群实测可用——用错队列是最常见的失败原因，换集群前先跑 `scnet probe` 看可用队列\n[evidence: verified]",
+      "type": "string",
+      "default": "xahcnormal"
+    },
+    "resources": {
+      "description": "资源申请",
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "description": "节点数（GAP_NNODE）。单节点无需 -cnf\n[evidence: verified]",
+          "type": "number",
+          "default": 1
+        },
+        "cores": {
+          "description": "总核数（GAP_NPROC）。实测单节点 28 核跑通过；不设 GAP_NODE_STRING 时按整节点分配\n[evidence: verified]",
+          "type": "number",
+          "default": 4
+        },
+        "walltime": {
+          "description": "墙钟上限 HH:MM:SS（GAP_WALL_TIME）。实测 02:00:00 可提交\n[evidence: verified]",
+          "type": "string",
+          "default": "02:00:00"
+        },
+        "exclusive": {
+          "description": "独占节点（GAP_EXCLUSIVE）\n[evidence: untested]",
+          "type": "boolean",
+          "default": false
+        },
+        "ppn": {
+          "description": "每节点进程数（GAP_PPN）\n[evidence: untested]",
+          "type": "number"
+        },
+        "gpus": {
+          "description": "GPU 数（GAP_NGPU）\n[evidence: untested]",
+          "type": "number"
+        },
+        "dcus": {
+          "description": "DCU 数（GAP_NDCU）\n[evidence: untested]",
+          "type": "number"
+        },
+        "nodeString": {
+          "description": "指定节点列表（GAP_NODE_STRING）。给了它就不要再给 nodes：两者互斥，另一个必须留空\n[evidence: verified]",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "workDir": {
+      "description": "远端工作目录（GAP_WORK_DIR）。留空＝取第一个 inputs[].remoteDir；再没有就是远端家目录。开头的 ~ 会展开成家目录\n[evidence: verified]",
+      "type": "string",
+      "default": ""
+    },
+    "inputs": {
+      "description": "要上传到远端的文件。上传目标目录若不存在，提交前会尝试创建",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "local": {
+            "description": "本地路径",
+            "type": "string"
+          },
+          "remoteDir": {
+            "description": "远端目录。开头的 ~ 展开成家目录（如 ~/runs/001）；不建议写死 /public/home/<用户名>",
+            "type": "string"
+          },
+          "chunkMiB": {
+            "description": "单片大小 MiB，覆盖 upload.chunkMiB",
+            "type": "number",
+            "default": 8
+          },
+          "cover": {
+            "description": "同名文件是否覆盖",
+            "type": "string",
+            "enum": [
+              "cover",
+              "uncover"
+            ],
+            "default": "cover"
+          },
+          "skipIfSameSize": {
+            "description": "远端已有同名且字节数相同的文件就跳过上传（省时间；大文件重传代价很高）",
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": [
+          "local",
+          "remoteDir"
+        ]
+      }
+    },
+    "fluent": {
+      "description": "Fluent 批量任务：由这些参数生成命令行（与 command / commandFile 三选一）",
+      "type": "object",
+      "properties": {
+        "installCandidates": {
+          "description": "FLUENT_ROOT 候选目录，按顺序探测。注意第三项是 shell 通配符，脚本里必须不加引号展开——这是之前\"fluent binary not found\"的直接教训\n[evidence: verified]",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "$HOME/apprepo/fluent/2023r1-xian",
+            "$HOME/apprepro/fluent/2023r1-xian",
+            "$HOME/appre*/fluent/2023r1-xian"
+          ]
+        },
+        "binRelPath": {
+          "description": "可执行文件相对 FLUENT_ROOT 的路径（2023R1 实测值）\n[evidence: verified]",
+          "type": "string",
+          "default": "app/v231/fluent/bin/fluent"
+        },
+        "dimension": {
+          "description": "维度与精度，如 3ddp / 3d / 2ddp\n[evidence: verified]",
+          "type": "string",
+          "default": "3ddp"
+        },
+        "mpi": {
+          "description": "-mpi= 的值\n[evidence: verified]",
+          "type": "string",
+          "default": "intel"
+        },
+        "cores": {
+          "description": "-t 的值。0＝跟随 resources.cores\n[evidence: verified]",
+          "type": "number",
+          "default": 0
+        },
+        "journal": {
+          "description": "-i 的 journal 文件名（相对工作目录）\n[evidence: verified]",
+          "type": "string",
+          "default": "solve.jou"
+        },
+        "extraArgs": {
+          "description": "追加到命令行末尾的参数",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "env": {
+          "description": "额外的 export 行，形如 \"ANSYSLMD_LICENSE_FILE=...\"",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "preCommands": {
+          "description": "启动 Fluent 之前要跑的命令",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "postCommands": {
+          "description": "Fluent 退出之后要跑的命令",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    },
+    "openfoam": {
+      "description": "OpenFOAM 求解任务：由这些参数生成远端 shell（含七道门）。与 fluent / command / commandFile 四选一",
+      "type": "object",
+      "properties": {
+        "openfoamRoot": {
+          "description": "OpenFOAM 安装前缀（$WM_PROJECT_DIR）。默认值是西安集群 v2212 实测路径\n[evidence: verified]",
+          "type": "string",
+          "default": "/public/software/apps/OpenFOAM/v2212/hpcx-gcc-7.3.1/OpenFOAM-v2212"
+        },
+        "moduleName": {
+          "description": "module load 的名字。注意它只挂了一半 LD_LIBRARY_PATH，缺 lib/sys-openmpi ⇒ 渲染器会再 source $APPS/etc/bashrc 补齐，别删那一步\n[evidence: verified]",
+          "type": "string",
+          "default": "OpenFOAM/v2212-hpcx-gcc-7.3.1"
+        },
+        "platform": {
+          "description": "platforms/<platform> 的目录名，用来定位 lib 与 bin\n[evidence: verified]",
+          "type": "string",
+          "default": "linux64GccDPInt32Opt"
+        },
+        "solver": {
+          "description": "求解器名（多相 VOF 用 interFoam）\n[evidence: verified]",
+          "type": "string",
+          "default": "interFoam"
+        },
+        "caseSubdir": {
+          "description": "算例相对 workDir 的子目录。留 \".\" 表示 workDir 本身就是算例根",
+          "type": "string",
+          "default": "."
+        },
+        "unpack": {
+          "description": "算例以归档形式上到 workDir 时给归档名（相对 workDir，如 s1b-refined-v2212.tar.gz）。渲染器会先解包再判 GATE-UNPACK——解包与校验是一件事的两半，只解包不校验就会漏掉\"tar 多带一层 <case>/ 前缀\"那一类错。支持 .tar.gz/.tgz/.tar/.zip\n[evidence: untested]",
+          "type": "string"
+        },
+        "cores": {
+          "description": "MPI 进程数。0＝跟随 resources.cores。注意它只决定 -np，分区数是 decomposeParDict 里的 numberOfSubdomains（GATE-DECOMPOSE 会查两者是否一致）\n[evidence: verified]",
+          "type": "number",
+          "default": 0
+        },
+        "launcherCandidates": {
+          "description": "按顺序真跑 hostname 冒烟，取第一个回行数等于核数的。顺序不能省：--bind-to core 在 i02r2n07 上 rc=0，在 b01r2n01 上必须退到 --oversubscribe\n[evidence: verified]",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "mpirun --bind-to core",
+            "mpirun",
+            "mpirun --bind-to none --oversubscribe"
+          ]
+        },
+        "prepare": {
+          "description": "新鲜算例时跑 blockMesh/checkMesh/setFields/decomposePar。检测到已有网格或 processor* 时自动跳过（重跑会覆盖已有结果）\n[evidence: verified]",
+          "type": "boolean",
+          "default": true
+        },
+        "expectCells": {
+          "description": "checkMesh 的 cells 必须等于它。给了才有 GATE-MESH 的硬数字（s1b=31200、s2=14832）\n[evidence: verified]",
+          "type": "number"
+        },
+        "endTime": {
+          "description": "期望末时刻（字符串比较，与日志里 `Time = ` 的值逐字相同）。给了才有 GATE-SOLVER 的时刻判据\n[evidence: verified]",
+          "type": "string"
+        },
+        "reconstruct": {
+          "description": "求解后 reconstructPar，把串行场写回算例根。并行算例的时刻只写在 processorN/ 里，不重构的话根目录看起来\"没算过\"\n[evidence: verified]",
+          "type": "boolean",
+          "default": true
+        },
+        "reconstructAll": {
+          "description": "true＝重构全部时刻（不带 -latestTime），代价高但能拿时间序列。实测作业只用过 -latestTime，这一支没在真实作业里跑过\n[evidence: untested]",
+          "type": "boolean",
+          "default": false
+        },
+        "env": {
+          "description": "额外的 export 行，形如 \"FOAM_SIGFPE=false\"",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "preCommands": {
+          "description": "环境装配之后、求解之前要跑的命令",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "extraSolveArgs": {
+          "description": "追加到求解器命令行末尾的参数",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "postCommands": {
+          "description": "reconstructPar 之后要跑的命令",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    },
+    "commandFile": {
+      "description": "本地脚本路径；脚本**内容**会内联进 GAP_CMD_FILE 交给远端执行（这是实测通过的路径）\n[evidence: verified]",
+      "type": "string"
+    },
+    "command": {
+      "description": "直接给的 shell 命令（多行用 \\n）\n[evidence: verified]",
+      "type": "string"
+    },
+    "upload": {
+      "description": "上传行为",
+      "type": "object",
+      "properties": {
+        "chunkMiB": {
+          "description": "分片大小 MiB\n[evidence: verified]",
+          "type": "number",
+          "default": 8
+        },
+        "retries": {
+          "description": "单片重试次数\n[evidence: verified]",
+          "type": "number",
+          "default": 3
+        },
+        "cover": {
+          "description": "同名是否覆盖",
+          "type": "string",
+          "enum": [
+            "cover",
+            "uncover"
+          ],
+          "default": "cover"
+        },
+        "verifySize": {
+          "description": "上传后按字节数粗校验一遍",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "outputs": {
+      "description": "作业结束后要取回的文件",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "remote": {
+            "description": "远端路径。以 / 开头＝绝对路径；否则按 workDir 解析（作业的工作目录）。%j 替换成作业号，开头的 ~ 展开成家目录",
+            "type": "string"
+          },
+          "local": {
+            "description": "本地保存路径",
+            "type": "string"
+          },
+          "required": {
+            "description": "取不到时是否算失败",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "remote",
+          "local"
+        ]
+      }
+    },
+    "stdout": {
+      "description": "标准输出文件名，%j=作业号\n[evidence: verified]",
+      "type": "string",
+      "default": "stdout.%j"
+    },
+    "stderr": {
+      "description": "标准错误文件名\n[evidence: verified]",
+      "type": "string",
+      "default": "stderr.%j"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "required": [
+            "fluent"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "openfoam"
+                ]
+              },
+              {
+                "required": [
+                  "command"
+                ]
+              },
+              {
+                "required": [
+                  "commandFile"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "openfoam"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "fluent"
+                ]
+              },
+              {
+                "required": [
+                  "command"
+                ]
+              },
+              {
+                "required": [
+                  "commandFile"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "commandFile"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "fluent"
+                ]
+              },
+              {
+                "required": [
+                  "openfoam"
+                ]
+              },
+              {
+                "required": [
+                  "command"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "fluent"
+                ]
+              },
+              {
+                "required": [
+                  "openfoam"
+                ]
+              },
+              {
+                "required": [
+                  "commandFile"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

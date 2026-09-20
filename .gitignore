@@ -1,0 +1,41 @@
+# ── 凭据：绝对不入库 ────────────────────────────────────────────────
+# 约定：凭据只放在 ~/.nefx/scnet/secret.json，在仓库之外（也不在 Documents 底下）。
+# 下面这些是"万一有人把密钥复制进仓库"时的兜底拦截。
+secret.json
+*secret*.json
+!templates/*.json
+!templates/**/*.json
+*.pem
+*.key
+.env
+.env.*
+
+# ── 运行产物 ────────────────────────────────────────────────────────
+runs/
+out/
+results/
+*.log
+
+# ── 算例与大数据文件（体积大，走网盘/远端，不进 git）────────────────
+*.cas
+*.cas.h5
+*.dat
+*.dat.h5
+*.msh
+*.msh.h5
+*.trn
+*.hsf
+*.efilePart
+
+# ── Node / 编辑器 ───────────────────────────────────────────────────
+node_modules/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tsbuildinfo
+
+# ── 提交信息草稿 ────────────────────────────────────────────────────
+# 长提交信息走 `git commit -F <文件>`；这文件是临时的，但 `git add -A`
+# 会顺手把它一起收进去——2026-09-17 真发生过一次，得 amend 才清掉。
+.git-msg.tmp
