@@ -17,6 +17,11 @@
 > `scnet-client/ops@1`、`scnet-client/watch@2`、`scnet-client/run-record@1`、
 > `https://local/scnet-client/job.schema.json`。
 
+> **这份 README 是写给人看的。如果干活的是 agent，先让它读 [`SKILLS.md`](./SKILLS.md)。**
+> 分工：README 讲"有哪些命令、字段怎么填"；SKILLS.md 讲**判据**——
+> 什么才算"跑完了"、哪一步会**静默**把你的算例改掉、每道门的退出码是什么。
+> 两者不重复，也不互相替代。
+
 ## 凭据
 
 一个 JSON 文件：
