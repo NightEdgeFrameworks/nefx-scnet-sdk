@@ -1,326 +1,416 @@
-# nefx-scnet-sdk
+# nefx-scnet-sdk —— 曙光超算作业提交工具
 
-曙光超算（国家超算互联网 SCNet）OpenAPI 2.0 客户端。把**已经跑通**的那条链路固化成一个可复用的小工具：
+把你本机已经算得动的算例，送到曙光超算（国家超算互联网 SCNet）上算，再把结果取回来。
 
-```
-本地算例  →  分片上传  →  按 JSON 模板提交作业  →  轮询 / 取回结果
-  ├─ Fluent：  .cas.h5 + journal
-  └─ OpenFOAM：整个 case 目录（或 case.tar.gz），远端块网格→设场→分块→求解→重构
-```
+它替代的是**网页端那一串手工操作**：登录 → 传算例 → 填申请表 → 提交 → 反复刷新看进度 →
+下载结果文件。这些动作在这个工具里各是一条命令，而且可以写成一行连续跑完。
 
-零运行时依赖。Node ≥ 23.6 直接跑 TypeScript（类型剥离），**没有构建步骤**。
+支持两类算例：
 
-覆盖范围：**只包含已在真实作业里跑通过的接口**。没实测过的能力不写进代码——模板 schema 里用
-`evidence: untested` 标出来（`exclusive` / `ppn` / `gpus` / `dcus` 四个字段即是）。
+| 你手上是什么 | 它替你做什么 |
+| --- | --- |
+| **Fluent**：`.cas.h5` + 批处理 journal | 上传算例与 journal → 远端起 Fluent 跑 journal → 取回你点名的结果文件 |
+| **OpenFOAM**：整个算例目录（或打包成一个 `.tar.gz`） | 上传 → 远端 `blockMesh → checkMesh → setFields → decomposePar → 求解 → reconstructPar` 一条龙，**每一步都对错自检** |
 
-> 几个**线格式**标识符以 `scnet-client/` 开头，它们是跨仓库契约、有测试钉着，不随包名变：
-> `scnet-client/ops@1`、`scnet-client/watch@2`、`scnet-client/run-record@1`、
-> `https://local/scnet-client/job.schema.json`。
+如果你只想先把现有的算例换个机器跑一遍、不想学任何新东西，那么你需要读的只有下面
+「第一次使用」那五步。
 
-> **这份 README 是写给人看的。如果干活的是 agent，先让它读 [`SKILLS.md`](./SKILLS.md)。**
-> 分工：README 讲"有哪些命令、字段怎么填"；SKILLS.md 讲**判据**——
-> 什么才算"跑完了"、哪一步会**静默**把你的算例改掉、每道门的退出码是什么。
-> 两者不重复，也不互相替代。
+---
 
-## 凭据
+## 在你动手之前
 
-一个 JSON 文件：
+三样东西备齐就能开始。这三样缺任何一样，后面都会卡住，所以先确认：
+
+**① 一个曙光超算账号，以及它的三样凭据。**
+从超算平台的个人中心可以取得：**用户名**、**AccessKey**、**SecretKey**。
+（这三样等同于你的账号密码，别贴进聊天记录、别提交进任何代码仓库。）
+
+**② 一个已经在本机跑通的算例。**
+本工具**不检查你的物理设置对不对**——它只负责把算例原样送上去、按你说的命令跑、把结果拿回来。
+算例本身在超算上能不能收敛，是它管不了的事。所以先用一个小的、你确定没问题的算例走一遍全流程。
+
+**③ 装好 Node.js，版本 23.6 或更高。**
+
+> 这是什么？Node.js 是一个运行环境，作用类似 OpenFOAM 或 Fluent 的安装包——
+> 它不是这个工具的一部分，是**这个工具要跑起来所依赖的东西**。
+> 到 <https://nodejs.org> 下载 LTS 版安装即可，一路默认选项。
+> 装完在终端里敲 `node -v`，会打印一个版本号（例如 `v24.15.0`）。**这个数字要 ≥ 23.6。**
+> 如果它说「不是内部或外部命令」，说明没装成功或没重启终端——**停在这里，先解决它**。
+
+这个工具**不需要编译、不需要安装依赖**。仓库目录里直接敲命令就能用。
+
+---
+
+## 第一次使用：五步
+
+以下命令都在**本工具所在的目录**里执行（也就是含 `README.md` 的这一层）。
+把「本工具所在目录」理解成算例的父目录那样的概念就行。
+
+### 第 1 步：把凭据放好
+
+在你自己电脑的用户主目录下建一个文件 `.nefx/scnet/secret.json`，内容是一个 JSON：
 
 ```json
-// ~/.nefx/scnet/secret.json
-{ "user": "…", "access_key": "…", "secret_key": "…" }
-```
-
-来源优先级（前一条齐全就不看后面的）：
-
-1. 环境变量 `SCNET_USER` / `SCNET_ACCESS_KEY` / `SCNET_SECRET_KEY`——**三个齐全才生效**
-2. `SCNET_SECRET_PATH` 指定的文件
-3. `~/.nefx/scnet/secret.json`
-
-凭据的值**永不经过 stdout**（实现见 `src/redact.ts`）。
-
-## 快速上手
-
-```bash
-# 1) 先跑只读冒烟：认证 / 端点 / 文件 / 队列 / 作业列表 五条链路
-npm run smoke
-
-# 2) 看模板长什么样，照着改
-node src/cli.ts init --out my-job.json
-node src/cli.ts check my-job.json            # 离线校验（缺本地文件会报错）
-node src/cli.ts preview my-job.json          # 离线打印将发出的提交体
-node src/cli.ts run my-job.json --wait --download
-```
-
-## 命令一览
-
-| 命令 | 联网 | 说明 |
-| --- | --- | --- |
-| `auth` | 是 | 认证，列出可用区域（token 已脱敏） |
-| `probe` | 是 | 端点 / 调度器 ID / 队列 / 配额 / 已用机时 |
-| `smoke` | 是，只读 | 五条链路冒烟。**不上传、不提交** |
-| `ls [路径]` | 是 | 列远端目录（**列全**，不截断） |
-| `quota [--user <名>]` | 是 | 共享存储配额与已用量（GB），一条记录一个挂载路径 |
-| `jobs` `job <id>` | 是 | 作业列表 / 作业详情（读调度器 `JobState`） |
-| `readfile --path <p>` | 是 | 读远端文本文件 |
-| `put` / `get` / `mkdir` | 是 | 单文件上传 / 下载 / 建目录 |
-| `init` / `schema` | 否 | 生成起步模板 / JSON Schema |
-| `check <模板>` | 否 | 静态校验（`--lenient` 把"本地文件不存在"降成警告） |
-| `preview <模板>` | 否（`--online` 才联网） | 打印上传清单、`GAP_WORK_DIR`、远端命令、提交体 |
-| `run <模板>` | 是 | 建目录 → 上传 → 提交 →（`--wait`）→（`--download`）→ 落 `runs/` 记录 |
-| `kill <id...>` | 是 | 取消作业，并**回查** `JobState` 确认 |
-| `serve` | 是 | 本机 HTTP **只读**接口（默认 `127.0.0.1:8787`） |
-| `mcp` | 是 | MCP **stdio** 服务端，给别的 agent / MCP 客户端调 |
-
-`init` 只给 Fluent 起步模板。OpenFOAM 的起步模板在核心层（`get_job_template?kind=openfoam`），
-所以 `init` 拿不到——CLI 里 `check` / `preview` 吃任意来源的模板（含 openfoam），
-而取模板的 `get_job_template` 与渲染 shell 的 `render_job_command` 只在 HTTP / MCP 两个界面暴露。
-两条腿都是**离线、不读凭据**的，从哪个界面拿都一样；
-真提交只走 CLI 的 `run`——写操作不进那两个只读界面。
-
-## 三个界面，一份判据
-
-`serve` 和 `mcp` 暴露的是**同一批只读操作**，定义在 `src/core.ts` 的 `OPERATIONS` 表里。
-CLI 是第三个壳。加一个界面不用改核心层，核心层加一个操作三个界面都能用。
-
-### HTTP
-
-```bash
-npm run serve                                   # 起本机 HTTP
-curl 'http://127.0.0.1:8787/ops'                # 操作清单
-curl 'http://127.0.0.1:8787/op/list_jobs?limit=5'
-curl 'http://127.0.0.1:8787/op/watch?id=67307512&steps=10000'
-curl 'http://127.0.0.1:8787/op/watch?id=67307512&format=text'   # 人读短句
-curl 'http://127.0.0.1:8787/op/get_job_template?kind=openfoam'  # 离线：取 OpenFOAM 起步模板 + 七道门
-```
-
-### MCP
-
-DSH 的 `dsh-mcp-client` 配置片段：
-
-```yaml
-- id: mcp-scnet
-  name: '@deepseek-ai/dsh-mcp-client'
-  config:
-    serverName: scnet
-    transport: stdio
-    command: node
-    args: ['<仓库根>/src/mcp.ts']
-    cwd: '<仓库根>'
-```
-
-工具会以 `mcp__scnet__<name>` 出现，目前 11 个。**注意 token 成本**：工具描述每次请求都进提示词，
-所以描述都压得很短。加工具等于给自己加税。
-
-### 两条硬约束
-
-1. **HTTP 只绑回环地址**，没有 `--allow-remote` 这种开关——进程内存里有一份有效的平台 token。
-2. **两个界面都是只读的**，不含上传 / 提交 / 取消。写操作不可逆（取消一个算了几天的作业），
-   不由一个没有认证的本机端口提供。
-
-## watch 的返回形状
-
-`watch` 认两类作业（看返回里的 `kind`）：Fluent 读 `.trn` / stdout 的
-`Flow time = .., time step = ..`，OpenFOAM 读算例目录里 `log.<solver>.<fresh|restart>` 的
-`Time = `、ETA 靶子取 `system/controlDict` 的 `endTime`。
-`rate` / `eta` 因此是**判别联合**：Fluent 给「秒/步」，OpenFOAM 给「秒/单位物理时间」——
-后者按物理时间推进，没有步号，`--steps` 对它无效。
-
-## 模板
-
-字段表在 `src/jobtemplate.ts` 的 `SPEC`，是**唯一事实来源**——校验、默认值、JSON Schema 全从它派生。
-完整字段见 `templates/job.schema.json`（每个字段的 description 里带 `[evidence: verified|untested]`）。
-
-```jsonc
 {
-  "name": "tps-steady-001",
-  "queue": "xahcnormal",          // 西安集群实测可用；换集群先跑 `probe`
-  "resources": { "nodes": 1, "cores": 8, "walltime": "02:00:00" },
-  "inputs": [
-    { "local": "case/1.cas.h5", "remoteDir": "~/runs/001" },
-    { "local": "examples/solve.jou", "remoteDir": "~/runs/001" }
-  ],
-  "fluent": { "cores": 8, "journal": "solve.jou" },
-  "outputs": [{ "remote": "1_out.dat.h5", "local": "results/1_out.dat.h5" }]
+  "user": "你的用户名",
+  "access_key": "你的 AccessKey",
+  "secret_key": "你的 SecretKey"
 }
 ```
 
-三个约定值得单独记住：
+Windows 上这个路径是 `C:\Users\<你的用户名>\.nefx\scnet\secret.json`，
+Linux/macOS 上是 `~/.nefx/scnet/secret.json`。
 
-1. **远端路径用 `~` 开头**。`~/runs/001` 在认证后展开成真实家目录。写死 `/public/home/<用户名>`
-   会被校验直接拦下来——尖括号进了远端 shell 就是重定向。
-2. **`workDir` 默认等于第一个 `inputs[].remoteDir`**，也就是作业的 cwd 就是算例所在目录。
-   两者不一致是"作业正常跑完但 Fluent 找不到 cas 文件"的头号原因。
-3. **`outputs[].remote` 写相对路径**（相对 `workDir`），绝对路径原样用，`%j` 换成作业号。
+**你会看到什么**：这一步没有任何输出。文件放好了就是放好了。
+放错地方的症状会在下一步出现（它会说找不到凭据）。
 
-### OpenFOAM 模板
+> 这个工具**永远不会把你的密钥打印到屏幕上**。如果它打印了，那是 bug，请上报。
 
-命令来源是**四选一**（`fluent` / `openfoam` / `commandFile` / `command`），给两个就报错。
-`openfoam` 那一组标了 `omitWhenAbsent`——**补默认值不许顶掉用户显式给的命令来源**。
+### 第 2 步：确认它能连上超算
 
-```jsonc
+```bash
+node src/cli.ts smoke
+```
+
+这是一次**只读**检查：认证、看端点、看文件目录、看队列、看作业列表，五条链路各走一遍。
+它**不上传任何东西、不提交任何作业**——可以放心在真实的超算账号上跑。
+
+**你会看到什么**：五行左右的检查结果，每条前面带状态。全绿就说明凭据和网络都通了。
+
+**如果它报错**：先把报错原文抄下来（**停下，不要换别的方法试**），这说明凭据或网络有问题，
+在解决之前后面的步骤都会失败。
+
+### 第 3 步：确认你要提交到哪个集群 ← **这一步最容易出错**
+
+```bash
+node src/cli.ts auth
+```
+
+**你会看到什么**：一张可用区域的列表，每个区域前面有一个**序号**（0、1、2…）。
+
+**为什么必须做这一步**：曙光有多个集群（例如华东一区在昆山、西北一区在西安），
+它们**算例和文件互不相通**——传上去的文件只在你选的那个集群上。
+而这个工具**如果不明确告诉它选哪个，它会默认选列表里的第 0 个**，
+那很可能不是你的账号所在、或者不是你想要的集群。
+
+所以：**在列表里找到你的集群，记住它前面的序号**，后面每条命令都带上这个序号：
+
+```bash
+node src/cli.ts ls --region 1        # 例：1 = 西北一区【西安】
+```
+
+你的算例在哪个集群上，就问清楚用哪个号。选错了的症状是「文件明明传上去了，下一步却说找不到」。
+
+### 第 4 步：写一份作业模板
+
+模板是一个文本文件（JSON 格式），描述「哪个算例、传到哪、用什么命令跑、结果取回哪些」。
+不用从零手写，先生成一份起步模板：
+
+```bash
+node src/cli.ts init --out my-job.json
+```
+
+用任意文本编辑器打开 `my-job.json` 改。Fluent 的模板长这样：
+
+```json
 {
-  "name": "of-run-001",
+  "name": "cyl-steady-001",
   "queue": "xahcnormal",
-  "resources": { "nodes": 1, "cores": 16, "walltime": "03:00:00" },
-  "workDir": "~/runs/of-001",
-  "inputs": [{ "local": "case/s1b-refined-v2212.tar.gz", "remoteDir": "~/runs/of-001" }],
+  "resources": { "nodes": 1, "cores": 8, "walltime": "02:00:00" },
+  "inputs": [
+    { "local": "case/cylinder.cas.h5", "remoteDir": "~/runs/001" },
+    { "local": "case/solve.jou",      "remoteDir": "~/runs/001" }
+  ],
+  "fluent": { "cores": 8, "journal": "solve.jou" },
+  "outputs": [{ "remote": "cyl_out.dat.h5", "local": "results/cyl_out.dat.h5" }]
+}
+```
+
+逐项解释（都是 CFD 概念，不是编程概念）：
+
+| 字段 | 填什么 | 注意 |
+| --- | --- | --- |
+| `name` | 这次作业的名字 | 只用于你自己辨认，出现在运行记录里 |
+| `queue` | 队列名 | 先跑 `probe` 看这个集群有哪些队列；西安集群实测可用 `xahcnormal` |
+| `resources.nodes` | 申请几个节点 | 一般填 `1` |
+| `resources.cores` | **申请几个核** | 这是并行核数。要和你算例的分块数、以及 Fluent 的核数一致 |
+| `resources.walltime` | 最长算多久 | 格式 `时:分:秒`。**超时会被调度器直接杀掉**，宁可先给宽一点 |
+| `inputs[].local` | 本机上要传上去的文件 | 路径相对当前目录；可以用多个 `inputs[]` 传多个文件 |
+| `inputs[].remoteDir` | 传到远端哪个目录 | **必须用 `~` 开头**（见下面第 1 条约定） |
+| `fluent.cores` | Fluent 自己用几个核 | 和 `resources.cores` 写成一样，不一致它会警告你 |
+| `fluent.journal` | journal 文件名 | 就是你 `inputs` 里传上去的那个 `.jou` 的文件名 |
+| `outputs[].remote` | 远端要取回的**文件名** | 相对远端算例目录写；名字必须和 journal 里 `write-data` 的名字一致 |
+| `outputs[].local` | 取回到本机哪个路径 | 例如 `results/cyl_out.dat.h5` |
+
+**写完先做两件事，都不联网、不花钱：**
+
+```bash
+node src/cli.ts check   my-job.json     # 检查字段填得对不对、提到的本地文件在不在
+node src/cli.ts preview my-job.json     # 打印「会传哪些文件、会在远端执行什么命令」
+```
+
+`preview` 打出来的那段远端命令**值得读一遍**——那是真正会在超算上跑的东西。
+
+> ⚠️ 这两条命令全绿，**只说明「字段没写错」，不说明「在超算上跑得起来」**。
+> 有些错误（例如算例该不该解包）只有真提交才会暴露。先拿小算例试。
+
+### 第 5 步：提交、等待、取回
+
+```bash
+node src/cli.ts run my-job.json --region 1 --wait --download
+```
+
+这一条命令依次做四件事：
+
+1. 在远端建目录；
+2. 把你的算例分片上传上去（大文件会自动切片，断了会重传）；
+3. 提交作业，并打印**作业号**（一个数字，例如 `71134838`——记下它，查进度、取消都靠它）；
+4. `--wait` 等它跑完、`--download` 把 `outputs` 里点名的文件取回本机。
+
+**你会看到什么**：上传进度百分比 → 作业号 → 状态轮询（`PENDING` 排队 / `RUNNING` 在算 /
+`COMPLETED` 完成）→ 取回的文件列表。
+
+**跑完之后**，当前目录下会多出一个 `runs/<时间戳>-<作业名>/run.json`。
+里面完整记着：这次用的模板、上传的每个文件的校验值、远端真正执行的命令、作业号、最终状态、取回了什么。
+**这是「这个结果是怎么来的」的凭证，别删。**
+
+---
+
+## 不想一直盯着：中途查看进度
+
+`run --wait` 会一直占着终端。如果你把作业提交上去就去干别的了，回来这样查：
+
+```bash
+node src/cli.ts jobs --region 1              # 最近一批作业的列表
+node src/cli.ts job 71134838 --region 1      # 单个作业的详情（含最终状态）
+node src/cli.ts watch 71134838 --region 1    # 进度 / 速度 / 预计还要多久
+node src/cli.ts watch 71134838 --region 1 --steps 10000   # Fluent：按总步数给百分比
+```
+
+`watch` 会读求解器自己的日志，给出「现在算到哪、多快、大概还要多久」。
+Fluent 读的是 `Flow time / time step`；OpenFOAM 读的是日志里的 `Time =`，
+这时候速度是「每秒推进多少物理时间」，`--steps` 对它无效。
+
+**同一个作业不要问得太密**（间隔小于 30 秒）。它会为了算速度而做采样，问太密反而给不出速度。
+
+**不想让它算了**：
+
+```bash
+node src/cli.ts kill 71134838 --region 1
+```
+
+取消是**不可逆**的（一个算了几天的作业取消就没了），所以这条命令执行后会**回头再查一次**
+作业状态，确认真的停了才告诉你成功。
+
+---
+
+## 查一下你还剩多少空间
+
+超算的共享存储有配额。**传大算例之前先看一眼**，不然可能传到一半失败：
+
+```bash
+node src/cli.ts quota --region 1
+```
+
+**你会看到什么**：每个挂载路径的配额上限与已用量（单位 GB）。接近上限时先清理远端的旧算例。
+
+---
+
+## OpenFOAM 算例：多两件要知道的事
+
+OpenFOAM 不是「一个算例文件」，而是「一个目录」（含 `system/`、`constant/`、`0.orig/` 等）。
+这份工具在远端会按顺序做：建网格 → 检查网格 → 设初始场 → 分块 → 并行求解 → 把结果拼回整场。
+
+### 1. 算例怎么上传：两条路，选一条，别混
+
+| 你传上去的是 | 模板里要不要写 `unpack` |
+| --- | --- |
+| **一个压缩包**（`.tar.gz` / `.tgz` / `.tar` / `.zip`） | **要写**，值就是压缩包的名字（相对远端目录）。它会先解包再检查 |
+| **算例目录里的各个文件**（用多个 `inputs[]` 分别传） | **不要写**。它直接检查 |
+
+**为什么这件事重要**：如果你用 `tar -czf out.tar.gz -C <上层目录> <算例名>` 打包，
+压缩包里会多套一层目录名，解开来算例就不在你以为的位置。压缩命令本身**不会报错**，
+看起来一切正常——只有「解开之后回头确认 `system/controlDict` 在不在」能发现它。
+所以这两件事在这个工具里是绑在一起的。
+
+### 2. 全新算例 vs 断点续算
+
+- **全新算例**：远端那个目录里没有算过的中间结果 → 它走全新分支，从建网格开始。
+- **断点续算**：远端目录里已经有分区后的中间结果（`processor0/` 等）→ 它**自动走续算分支**，
+  跳过建网格和分块（这两步会覆盖掉已有结果），从断点继续往后续算。
+
+续算模板对应的写法：
+
+```json
+{
+  "name": "restart-001",
+  "queue": "xahcnormal",
+  "resources": { "nodes": 1, "cores": 4, "walltime": "00:15:00" },
+  "workDir": "~/runs/001",
+  "inputs": [],
   "openfoam": {
     "openfoamRoot": "/public/software/apps/OpenFOAM/v2212/hpcx-gcc-7.3.1/OpenFOAM-v2212",
     "moduleName": "OpenFOAM/v2212-hpcx-gcc-7.3.1",
-    "solver": "interFoam",
-    "cores": 16,                   // 与 resources.cores 不一致会告警
-    "unpack": "s1b-refined-v2212.tar.gz",  // 算例以归档上到 workDir 时给归档名；先解包再判 GATE-UNPACK
-    "expectCells": 31200,          // 给了才判 GATE-MESH；不给只打印实测值
-    "endTime": "0.55",             // 给了才判末时刻；不给只判 FOAM FATAL 计数与 rc
-    "reconstruct": true,           // reconstructPar -latestTime
-    "reconstructAll": false        // true 则不给 -latestTime（重构全部时刻，慢）
+    "solver": "icoFoam",
+    "cores": 4,
+    "endTime": "0.55",
+    "reconstruct": true
   }
 }
 ```
 
-`prepare: true`（默认）才会在检测不到已有网格时跑 `blockMesh → checkMesh → setFields → decomposePar`；
-检测到 `processor0/` 就自动走**续算分支**，跳过这四步——它们会覆盖已有结果。
-续算判据**只看 `processor0/`**：光有 `constant/polyMesh/` 不算（那说明 `blockMesh` 跑过、但
-`decomposePar` 没跑）。新鲜分支会先 `rm -rf 0 constant/polyMesh processor*` 清掉上一轮的残留，
-只清"本该被重造"的，**归档与上传的输入一个不动**。
-`launcherCandidates` 默认三个候选，`env` / `preCommands` / `extraSolveArgs` / `postCommands`
-是四个逃生口（按顺序：环境 → 预命令 → 求解 → 后命令）。
+注意 `inputs` 是**空的**——续算不需要再传算例，它直接用远端已有的。`workDir` 指向那个既有算例。
 
-**算例怎么上去**：两条路，选一条，别混。
+**投续算前必须算一个数**：`(目标末时刻 − 断点) ÷ 时间步长` 是不是 `writeInterval` 的整数倍。
 
-| 你的 `inputs[].local` | 要不要 `unpack` |
-| --- | --- |
-| 一个归档（`*.tar.gz` / `*.tgz` / `*.tar` / `*.zip`） | **要给**，值就是归档名（相对 `workDir`，通常与 `inputs[].local` 的文件名一致）。渲染器先解包，再判 `GATE-UNPACK` |
-| 算例的文件/目录本身（多个 `inputs[]`） | 不要给。渲染器直接判 `GATE-UNPACK` |
+> **为什么**：OpenFOAM 在 `writeControl timeStep` 下，**只有时间步号能被 `writeInterval` 整除时才写盘**。
+> 如果目标末时刻正好落在这个网格之外，求解器会**正常算完**（时间真的推到了目标时刻、返回码为 0），
+> 但算例目录里**就是没有那个时刻的文件夹**，于是最后「把结果拼回整场」这一步拿不到目标时刻而失败。
+> 这个失败看起来很像求解器崩了，其实物理侧一切正常。
+>
+> 保险做法：**把 `writeInterval` 改成 `1`**（每步都写盘）。它只影响写盘频率，不进入方程，不改结果。
 
-**为什么解包与校验必须绑在一起**：`tar -czf out.tar.gz -C <parent> <case>` 打包会把条目写成
-`<case>/system/controlDict`，解包后算例落在**子目录**里而不在 `workDir`。`tar` 的 `rc` 是 0，
-看起来完全正常——只有"解包之后回头验一次 `system/controlDict` 与 `0.orig/` 在不在"能抓住它。
-所以这两半在渲染器里是一件事：给了 `unpack` 就一定跟着一次 GATE-UNPACK。
+**全新算例**：直接在你本机的 `system/controlDict` 里把 `writeInterval` 改成 `1` 再上传，就完了。
 
-起步模板别手抄：`curl 'http://127.0.0.1:8787/op/get_job_template?kind=openfoam'`
-（或 MCP 的 `get_job_template`），返回的 JSON 里 `template` 直接能改，
-`gates` 是下面那张表的机器可读版。
+**断点续算**：算例已经在远端、这一轮不再上传，所以在模板里加一条 `preCommands`——
+它在「环境准备好之后、求解开始之前」执行，正好用来改那一行：
 
-### 七道门
+```json
+"openfoam": {
+  "solver": "icoFoam",
+  "cores": 4,
+  "endTime": "0.55",
+  "preCommands": ["sed -i 's/^writeInterval.*/writeInterval     1;/' system/controlDict"],
+  "reconstruct": true
+}
+```
 
-渲染出的远端 shell 不只跑求解器，它在每个环节**自己判对错**，失败时打 `GATE-XXX FAIL`
-并带一个专属退出码（20–36）。判据清单在 `src/openfoam.ts` 的 `OPENFOAM_GATES`，
-与 `render_job_command` 的返回一起给出去。
+这一行的作用就是：在算例目录里，把 `system/controlDict` 中以 `writeInterval` 开头的那一行
+整行替换成 `writeInterval     1;`。**它改的是写盘频率，不改物理设置。**
 
-| 门 | 判什么 | 为什么不能省 |
+### 3. 八道门：它在远端每一步都自己判对错
+
+这份工具渲染出的远端脚本不只是一串命令，它在每个环节都检查「这一步到底成没成」，
+失败时打印 `GATE-XXX FAIL` 并带一个专属退出码。看到哪道门红了，就知道该查哪里：
+
+| 门 / 步骤 | 它检查什么 | 退出码 |
 | --- | --- | --- |
-| `GATE-ENV` | `interFoam -help` 真跑一次，rc 必须为 0 | `command -v` 只证明 PATH 里有它。`module load` 只挂了一半 `LD_LIBRARY_PATH`，缺 `lib/sys-openmpi` 时是 rc=127 + `libPstream.so` 找不到 |
-| `GATE-UNPACK` | 给了 `unpack` 就先解包；然后 `system/controlDict` 与 `0.orig/` 都在 | 打包多一层 `<case>/` 前缀时，后面四道门会**一起**变红，而原因看不出来。**只解包不校验等于没做** |
-| `GATE-MESH` | 打印 `checkMesh` 的 cells；给了 `expectCells` 才判 | 单元数是"网格生成走对了没有"的唯一硬数字 |
-| `GATE-SETFIELDS` | 从 `system/setFieldsDict` 读出场清单，逐个判 `0/<field>` 与 `0.orig/<field>` **不同**（`cmp -s`）；另加一条"`0/` 里没有场变小" | `setFields` 失败时返回码仍可能是 0，而 `0/` 里留着模板文件。**判据必须从字典里读，不能写死场名** |
-| `GATE-DECOMPOSE` | `processor*` 目录数 == `decomposeParDict` 的 `numberOfSubdomains` | 只传 `-subdomains` 改不了分区数；两者不一致时 `decomposePar` 会"成功"但分区数是错的 |
-| `GATE-LAUNCHER` | 逐个试 `mpirun` 候选，`hostname` 行数 == np 才算通过 | `--bind-to core` 在不同节点命运不同，**必须现场选，不能照抄别的节点** |
-| `GATE-SOLVER` | `FOAM FATAL\|sigFpe\|floating point exception` 计数 == 0 且 rc == 0（给了 `endTime` 再判末时刻） | 求解器遇到 alpha 越界 / FPE 可能打印 `FOAM FATAL` 后自行退出，而脚本层 rc 未必红 |
+| 环境 | OpenFOAM 安装目录在不在 | `20` |
+| `GATE-ENV` | 求解器**真跑一次**（不是只查 PATH） | `21` |
+| `GATE-UNPACK` | 压缩包解开成功、算例结构完整（有 `system/controlDict` 与 `0.orig/`） | `22` / `23` |
+| `blockMesh` | 建网格成功 | `24` |
+| `checkMesh` | 网格检查通过 | `25` |
+| `GATE-MESH` | 单元数与你期望的一致（模板里给了 `expectCells` 才判） | `26` |
+| `setFields` | 设初始场成功 | `27` |
+| `GATE-SETFIELDS` | 字典里点名的每个场**真的变了**（不是留着模板值） | `28` |
+| `decomposePar` | 分块成功 | `29` |
+| `GATE-DECOMPOSE` | 分出的块数 == 字典里写的块数 | `30` |
+| `GATE-LAUNCHER` | 并行启动方式在这个节点上真的能用 | `31` |
+| `GATE-SOLVER` | 日志里没有 `FOAM FATAL` / 浮点异常，且求解器返回码为 0 | `32` / `33` |
+| `GATE-SOLVER` | 末时刻等于你指定的 `endTime`（给了 `endTime` 才判） | `34` |
+| `reconstructPar` | 拼回整场成功 | `35` |
+| 末时刻落位 | 算例根目录里**确实有末时刻文件夹** | `36` |
+| `GATE-RESTART` | 续算**真的从断点起算**（不是从头重算） | `37` |
 
-还有一条不在表里但同样硬：**末时刻必须在算例根目录**。并行算例的时刻写在 `processorN/` 里，
-所以"根目录只有 `0/` 和 `0.orig/`"意味着 `reconstructPar` 没做或没做对，
-而不是"算例没算"——这一步失败退出 36。
+最后一道门值得单独说：**续算最怕的不是报错，是「没报错但从头重算了一遍」**——
+机时白烧，而结果看起来完全正常。所以它会去日志里读出「求解器是从哪个时刻开始算的」，
+和断点比对，不一致就红。
 
-## 作为库用
+---
 
-```ts
-import { ScnetClient } from './src/client.ts';
+## 出错了怎么办
 
-const c = new ScnetClient({ region: '0' });
-const report = await c.run(template, { wait: true, download: true });
-console.log(report.jobId, report.wait?.state);
+**先把报错原文和作业号抄下来，然后停下来。** 不要连续换几种方法试——
+在超算上「多试一次」等于多花一次机时，而且会把真正的错误信息淹没。
+
+三种最常见的卡点：
+
+**① 说找不到凭据**。检查 `secret.json` 的路径和内容（第 1 步），注意 Windows 的主目录是
+`C:\Users\<你的用户名>\`。
+
+**② 文件明明传上去了，作业却说找不到算例**。头号原因是**上下传的目录和作业的工作目录不是同一个**。
+模板里 `workDir` 如果不写，就默认等于第一个 `inputs[].remoteDir`；两者写得不一样时容易出这个问题。
+
+**③ 作业状态是 `FAILED`，但看不出为什么**。读日志：
+
+```bash
+node src/cli.ts readfile --path '~/runs/001/stdout.71134838' --region 1
 ```
 
-`run()` 会在 `runs/<时间戳>-<作业名>/run.json` 落一份记录：模板 sha256、渲染出的命令、
-上传清单（含每个文件的 sha256）、作业号、终态、取回清单。要回答"这个结果是怎么来的"不用靠记忆。
+把作业号换成你自己的。里面会有各道门的结果和求解器的输出。
 
-## 环境变量
+**关于「作业跑完了吗」**：不要只看网页上那个状态标签，
+也不要只看退出码——**最终状态要看调度器的 `JobState`**（`job` / `run --wait` 给的就是它），
+求解器是否正常则要看日志里有没有 `FOAM FATAL`。
 
-只有四个，全都有默认值，不设也能跑：
+---
 
-| 变量 | 默认 | 用途 |
+## Fluent 用户的两个额外提醒
+
+**① 版本要对得上。** Fluent 的算例文件（`.cas.h5` / `.dat.h5`）与保存它的 Fluent 大版本绑定。
+用高版本存的算例拿到只有低版本的集群上跑，会在读入或迭代时报出莫名其妙的错误
+（实测遇到过：2025R1 存的算例在只有 2023R1 的节点上，一进迭代就报
+`chip-exec: function "none" not found` 并中止）。**先用 `probe` 确认集群上有哪个版本**，
+再决定用哪个版本存算例。
+
+**② journal 里先做事、诊断放最后。** journal 是一个命令序列，中间任何一条出错都会让整个
+journal 中止、作业以失败告终。所以别把探针类的命令放在开头。
+
+---
+
+## 命令速查
+
+| 命令 | 干什么 | 联网 |
 | --- | --- | --- |
-| `SCNET_USER` / `SCNET_ACCESS_KEY` / `SCNET_SECRET_KEY` | 无 | 凭据。**三个齐全才生效**，否则按上面「凭据」一节的顺序找文件 |
-| `SCNET_SECRET_PATH` | 无 | 显式指定凭据文件路径（比默认位置优先） |
-| `SCNET_STATE_DIR` | 凭据所在目录 | 可写状态目录：token 缓存 + `watch` 的进度基准点 |
+| `auth` | 认证，列出可用区域（**记住你的集群序号**） | 是 |
+| `smoke` | 只读自检：认证 / 端点 / 文件 / 队列 / 作业列表 | 是，只读 |
+| `probe` | 看这个集群的调度器、队列、配额、已用机时 | 是 |
+| `ls [路径]` | 列远端目录（一次列全，不截断） | 是 |
+| `quota` | 共享存储配额与已用量（GB） | 是 |
+| `jobs` / `job <id>` | 作业列表 / 单个作业详情 | 是 |
+| `watch <id>` | 进度 / 速度 / 预计完成 | 是 |
+| `readfile --path <p>` | 读远端文本文件（看日志用） | 是 |
+| `put` / `get` / `mkdir` | 单独上传 / 下载 / 建目录 | 是 |
+| `init` | 生成 Fluent 起步模板 | 否 |
+| `check <模板>` | 离线校验字段与本地文件 | 否 |
+| `preview <模板>` | 离线打印将上传的清单与远端命令 | 否 |
+| `run <模板>` | 建目录 → 上传 → 提交 →（`--wait`）→（`--download`） | 是 |
+| `kill <id...>` | 取消作业（会回查确认真的停了） | 是 |
 
-`SCNET_STATE_DIR` 存在的唯一理由是**只读挂载**：容器里凭据目录挂成 `:ro`（凭据不该能被容器改写），
-而上面两样都要写盘。不设它就会看到 `EROFS: read-only file system`。
-一条设计纪律：写状态目录失败**不该让接口调用失败**（缓存只是加速手段），
-所以两处写入都是 best-effort + stderr 各吼一次，`watch` 报告里的 `sample.persisted` 反映**实际**是否写成功。
+**所有命令都可以加 `--region <序号>`**。建议每次都写，理由见第 3 步。
 
-## 容器
+---
 
-```bash
-docker network create scnet-net
-docker volume create scnet-state
-docker run -d --name scnet-api --restart unless-stopped \
-  --network scnet-net \
-  -p 127.0.0.1:8787:8787 \
-  -v scnet-state:/var/lib/scnet \
-  -v "%USERPROFILE%\.nefx\scnet:/root/.nefx/scnet:ro" \
-  -v "<你的算例目录>:/cases:ro" \
-  nefx-scnet-sdk:0.1
-```
+## 关于「哪些能信」
 
-容器买到的是**常驻**（`--restart unless-stopped` 就是现成的服务管家）和**整箱搬走**，
-不是依赖隔离——这个项目零依赖，没什么可隔离的。两条必须守住的：
+这个工具**只做已经在真实作业里跑通过的事**。
 
-1. **`-p` 必须绑宿主回环**。容器内绑 `0.0.0.0` 是发布机制的要求（Docker 代理的是容器 IP，
-   不是容器 loopback），安全性全在发布侧这一行。
-2. **凭据只读挂载，绝不 `COPY` 进镜像**，也绝不用 `-e SCNET_ACCESS_KEY=...`——
-   前者会留在可 `docker save` 导出的层里，后者会写进 `docker inspect`。
+模板里少数字段被标成 `evidence: untested`，意思是**代码支持、但还没在真作业上验证过**：
+目前是 `exclusive`、`ppn`、`gpus`、`dcus` 四个。
+完整字段说明见 `templates/job.schema.json`，每个字段的说明里都带着这个标记。
 
-`mcp` 那条腿建议**不要**放进容器：`docker exec -i` 比直接 `node src/mcp.ts` 多一层，
-且会把 Docker Desktop 变成 MCP 的硬依赖。容器只跑 `serve`。
+它会替你省掉「摸清楚怎么提交」的试错，但**省不掉你自己对物理结果的验证**。
 
-## 目录
+---
 
-```
-src/           auth / api / upload / jobtemplate / openfoam / jobs / client / cli / redact
-src/openfoam.ts OpenFOAM 远端 shell 渲染器：七道门的判据清单 + 环境装配 + 续算分支
-src/core.ts    核心层：一组只读操作，CLI / HTTP / MCP 三个界面共用这一份判据
-src/serve.ts   本机 HTTP 只读接口（只绑回环）
-src/mcp.ts     MCP stdio 服务端（零依赖手写 JSON-RPC）
-templates/     job.schema.json（生成物）、fluent-batch.job.json、openfoam-interfoam.job.json
-examples/      solve.jou（一个可直接用的 Fluent 批处理 journal）
-tools/         rehearse-openfoam.sh：用 stub 顶替求解器，把渲染结果在本地真跑一遍
-test/          离线测试，不联网、不需要凭据
-Dockerfile     只把 serve 装进去；运行配方写在文件头注释里
-```
+## 给 agent / 自动化调用
 
-## 开发
+上面讲的都是人怎么用。如果有程序（或者另一个 agent）来调用这个工具，先读
+[`SKILLS.md`](./SKILLS.md)——那一份讲的是**判据**：什么才算「跑完了」、哪一步会**静默**改掉你的算例、
+每道门的退出码是什么、什么情况下必须停下来问人。两份文档不重复，也不互相替代。
+
+同一个工具另有两个只读界面，供程序调用：
 
 ```bash
-npm test            # 离线测试
-npm run lint:parse  # 逐文件语法检查（node --check，等价于"类型剥离后能解析"）
-npm run schema      # 改了 SPEC 之后重新生成 JSON Schema
-npm run smoke       # 五条只读链路冒烟（要凭据、要联网）
+node src/cli.ts serve      # 本机 HTTP 只读接口（默认 127.0.0.1:8787）
+node src/cli.ts mcp        # MCP 服务端（给支持 MCP 的客户端）
 ```
 
-想拿到完整类型检查，需要自己装 TypeScript（本项目刻意不引入任何依赖）：
+两者都**只读**：不含上传、提交、取消。写操作不可逆（取消一个算了几天的作业），
+不由一个没有认证的本机端口提供。HTTP 也只绑回环地址。
 
-```bash
-npm i -D typescript && npx tsc --noEmit
-```
-
-`tools/rehearse-openfoam.sh` 用一组 stub 顶替 `blockMesh` / `checkMesh` / `setFields` /
-`decomposePar` / `interFoam` / `reconstructPar` / `mpirun` / `module`，把**渲染器原样产出的 shell
-逐行真跑**，五个场景：新鲜全绿、`setFields` 空转（负对照，必须红在 `GATE-SETFIELDS`）、续算全绿、
-续算但求解器从 0 重算（负对照，必须红在 `GATE-RESTART`）、不打启动横幅且从 0 重算
-（负对照，考 `GATE-RESTART` 的兜底判据）。它证明不了"簇上能算"，但能证明
-"这段 shell 在算例结构正确时全绿、结构错误时红在对的地方"——**改了任何一道判据都该跑它**。
-
-在 Windows 上要跑它，用 Git Bash 的绝对路径（PATH 上的 `bash` 通常是 WSL 那个，没有 `cygpath`，
-会以 `REHEARSE-ABORT: 需要 cygpath` 退出 2；这个 abort 是刻意的，脚本宁可拒绝跑也不猜路径）：
-
-```bash
-& "C:\Program Files\Git\bin\bash.exe" tools/rehearse-openfoam.sh
-```
+---
 
 ## 许可
 
-MIT，见 `LICENSE`。这个包只覆盖**已在真实作业里跑通过的接口**，没实测过的能力宁可标
-`evidence: untested` 也不写进代码——它能省掉你的试错，但省不掉你自己的验证。
+MIT，见 `LICENSE`。
